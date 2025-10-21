@@ -2,6 +2,8 @@
     WORKDIR /app
     
     RUN corepack enable
+
+    RUN npm i -g typescript@5.9.3
     
     ARG VITE_REMOTES_ORIGIN
     ARG NODE_ENV=production
@@ -10,8 +12,8 @@
     ENV NODE_ENV=${NODE_ENV}
     ENV CI=true
     
-    COPY package.json yarn.lock ./
-    RUN yarn install --frozen-lockfile
+    COPY package.json ./
+    RUN yarn install
     
     COPY . .
     RUN yarn build
