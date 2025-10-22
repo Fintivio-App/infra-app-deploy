@@ -1,6 +1,6 @@
 FROM node:22-alpine
 
-COPY ../src ./
+COPY ./ ./
 
 RUN npm i
 RUN npm run build
