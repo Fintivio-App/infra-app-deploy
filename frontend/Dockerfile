@@ -7,15 +7,15 @@ RUN npm i -g typescript@5.9.3
 
 ARG VITE_REMOTES_ORIGIN
 ARG VITE_HOST_ORIGIN
+ARG NODE_ENV=development
 
 ENV VITE_REMOTES_ORIGIN=${VITE_REMOTES_ORIGIN}
 ENV VITE_HOST_ORIGIN=${VITE_HOST_ORIGIN}
-
-ENV NODE_ENV=development
+ENV NODE_ENV=${NODE_ENV}
 ENV CI=true
 
 COPY package.json ./
-RUN yarn install
+RUN yarn install --ignore-engines --ignore-optional --non-interactive --production=false
 
 COPY . .
 RUN yarn build
