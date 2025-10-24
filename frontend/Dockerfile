@@ -15,7 +15,7 @@ ENV NODE_ENV=${NODE_ENV}
 ENV CI=true
 
 COPY package.json ./
-RUN yarn install --ignore-engines --ignore-optional --non-interactive --production=false
+RUN yarn install --production=false
 
 COPY . .
 RUN yarn build
