@@ -43,11 +43,6 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
-          {{- if .Values.config.enabled }}
-          envFrom:
-            - configMapRef:
-                name: {{ include "generic-app.fullname" . }}
-          {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
