@@ -5,7 +5,7 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
-imagePullSecrets: ["dockerhub"]
+imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
