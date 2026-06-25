@@ -32,7 +32,11 @@ FRESH_DB=1 ./scripts/05-up.sh               # schema + seed + Java auto-create +
 ## What works vs. what to expect
 - ✅ Login + authorization (the demo user is an administrator with access to all routes).
 - ✅ All Node services + core schema; Java services boot and auto-create their tables.
-- ⚠️ **Business data is near-empty** (1 org + 1 entity). Seed more via the app/UI.
+- ✅ **Rich demo dataset** (`db/fresh/30-demo-data.sql`): the Smith family office — 6 entities
+  (trust/LLC/individuals) + 5 family members, 3 brokerage/bank accounts, ~$12.2M of public-markets
+  holdings with 3 years of monthly history, 3 PI funds (VC/PE/RE) with capital calls/distributions,
+  3 cars + 2 artworks, and ownership of every asset assigned to a family member/entity. Validated
+  against Postgres (0 errors). Add/seed more via the app as needed.
 - ⚠️ **Java `ddl-auto=update` is unvalidated here** (no JVM/Docker at authoring time) — it
   creates missing tables but could make minor alterations to shared tables. Watch the
   Java logs on first boot.
