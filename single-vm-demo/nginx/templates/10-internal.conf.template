@@ -1,0 +1,26 @@
+# Internal service resolution — the gateway forwards API calls to
+#   http://fintivio-<svc>-api.application/...   (no port -> :80)
+# Those hostnames are aliased to THIS nginx (see docker-compose nginx aliases).
+# Here we strip the ".application" suffix and proxy to the real service on :8080,
+# exactly like the Kubernetes Service did (port 80 -> targetPort 8080).
+#
+# This block also covers any inter-service call that uses a *.application default.
+
+map $host $appsvc {
+    default "";
+    "~^(?<svc>.+)\.application$"  $svc;
+}
+
+server {
+    listen 80;
+    server_name "~\.application$";
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    client_max_body_size 200m;
+    location / {
+        proxy_pass http://$appsvc:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+    }
+}

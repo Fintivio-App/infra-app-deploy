@@ -1,0 +1,4 @@
+# Never commit live secrets or certs
+.env
+tls/*.pem
+tls/*.key

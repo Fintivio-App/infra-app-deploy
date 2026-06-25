@@ -1,0 +1,54 @@
+{
+  "_comment": "MINIMAL bootstrap realm so login works on a fresh demo. PREFER replacing this with a real export from the existing Keycloak (see ../README.md) so the full role/access tree matches the apps. Keep clientId/secret/id in sync with .env (KEYCLOAK_CLIENT / KEYCLOAK_SECRET / KEYCLOAK_CLIENT_UUID).",
+  "realm": "fintivio",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "clientId": "fintivio-gateway",
+      "name": "Fintivio Gateway",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "CHANGE_ME_client_secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "https://fintivio.rosfin.tech/*",
+        "https://gateway.fintivio.rosfin.tech/*",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "https://fintivio.rosfin.tech",
+        "https://remotes.fintivio.rosfin.tech"
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "administrator" },
+      { "name": "family" },
+      { "name": "analyst" },
+      { "name": "outside-user" }
+    ]
+  },
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "email": "demo@fintivio.rosfin.tech",
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "CHANGE_ME_demo_pass", "temporary": false }
+      ],
+      "realmRoles": ["administrator"]
+    }
+  ]
+}

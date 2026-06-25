@@ -1,0 +1,111 @@
+# Public-facing vhosts (TLS termination). ${DOMAIN} is injected by the nginx
+# image's envsubst at startup; nginx runtime vars ($host, $uri, ...) are preserved.
+
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_session_cache shared:SSL:10m;
+
+# ── HTTP :80 — ACME + redirect to HTTPS (default for unmatched hosts) ─────────
+server {
+    listen 80 default_server;
+    server_name _;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+# ── main-ui host:  https://${DOMAIN} ─────────────────────────────────────────
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    client_max_body_size 200m;
+    location / {
+        proxy_pass http://fintivio-main-ui:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# ── Micro-frontends:  https://remotes.${DOMAIN}/<app>/... ────────────────────
+# Mirrors the prod ingress rewrite: /<app>(/...) -> fintivio-<app>-ui:80(/...)
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name remotes.${DOMAIN};
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    location ~ ^/(?<app>[a-z][a-z-]+?)(?<rest>/.*)?$ {
+        proxy_pass http://fintivio-$app-ui:80$rest;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        add_header Access-Control-Allow-Origin "https://${DOMAIN}" always;
+    }
+    location = / { return 204; }
+}
+
+# ── API gateway:  https://gateway.${DOMAIN} (credentialed CORS) ──────────────
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name gateway.${DOMAIN};
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    client_max_body_size 200m;
+    location / {
+        # Gateway's own cors() returns ACAO:* which is invalid with credentials.
+        # Replace it with the specific demo origin + credentials.
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        proxy_hide_header Access-Control-Allow-Methods;
+        proxy_hide_header Access-Control-Allow-Headers;
+        add_header Access-Control-Allow-Origin "https://${DOMAIN}" always;
+        add_header Access-Control-Allow-Credentials "true" always;
+        add_header Access-Control-Allow-Methods "GET,POST,PUT,PATCH,DELETE,OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type,Authorization,X-Requested-With,request-id,audit-module,audit-description,organization-id,x-external-file,x-secure-req" always;
+        if ($request_method = OPTIONS) { return 204; }
+        proxy_pass http://fintivio-gateway:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffer_size 16k;
+        proxy_buffers 8 16k;
+        proxy_read_timeout 120s;
+    }
+}
+
+# ── Keycloak:  https://auth.${DOMAIN} ────────────────────────────────────────
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name auth.${DOMAIN};
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    location / {
+        proxy_pass http://fintivio-keycloak:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# ── MinIO (optional):  https://files.${DOMAIN} ──────────────────────────────
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name files.${DOMAIN};
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    client_max_body_size 200m;
+    location / {
+        proxy_pass http://fintivio-minio:9000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

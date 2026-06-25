@@ -1,0 +1,312 @@
+###############################################################################
+# Fintivio — single-VM demo stack (fintivio.rosfin.tech)
+#
+# Routing model:
+#   - All public traffic terminates at the `nginx` service (TLS, ports 80/443).
+#   - The gateway forwards API calls to  http://fintivio-<svc>-api.application/...
+#     (no port -> 80). We DON'T change the backends: instead `nginx` also carries
+#     every `fintivio-*-api.application` network alias and proxies Host -> svc:8080,
+#     exactly mirroring what the Kubernetes Service did (port 80 -> targetPort 8080).
+#   - Backend images are pulled from Docker Hub as-is; frontends are built locally
+#     (scripts/03-build-frontends.sh) from their demo-version branch and tagged :demo.
+#
+# Bring-up order is handled by scripts/05-up.sh (infra -> migrations -> apps).
+###############################################################################
+
+x-node-backend: &node-backend
+  env_file: [.env]
+  restart: unless-stopped
+  networks: [fintivio]
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis:    {condition: service_started}
+
+x-java-backend: &java-backend
+  env_file: [.env]
+  restart: unless-stopped
+  networks: [fintivio]
+  # Spring reads SERVER_PORT/SPRING_DATASOURCE_* from .env. Stays on 8080 (approach B).
+  depends_on:
+    postgres: {condition: service_healthy}
+
+x-ui: &ui
+  restart: unless-stopped
+  networks: [fintivio]
+  expose: ["80"]
+
+services:
+  # ─────────────────────────── Infrastructure ────────────────────────────────
+  postgres:
+    image: postgres:15
+    container_name: fintivio-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command: ["postgres", "-c", "max_connections=512"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Runs ONCE on an empty data dir: creates schemas (main/sandbox/real_estate) + keycloak DB.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [fintivio]
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.4
+    container_name: fintivio-redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes: [redis_data:/data]
+    networks: [fintivio]
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: fintivio-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USERNAME}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    volumes: [minio_data:/data]
+    networks: [fintivio]
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.2
+    container_name: fintivio-keycloak
+    # --import-realm loads /opt/keycloak/data/import/*.json on first boot.
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: ${KC_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: ${KC_DB_URL}
+      KC_DB_USERNAME: ${KC_DB_USERNAME}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      KC_HTTP_PORT: "8080"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge                       # behind nginx TLS
+      KC_HOSTNAME_URL: "https://auth.${DOMAIN}"
+      KC_HOSTNAME_FRONTEND_URL: "https://auth.${DOMAIN}"
+      KC_HOSTNAME_ADMIN_URL: "https://auth.${DOMAIN}"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+      - ./keycloak/import:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [fintivio]
+    restart: unless-stopped
+
+  # ─────────────────────────── Reverse proxy ─────────────────────────────────
+  # Public TLS vhosts + internal `.application` resolution (Host -> svc:8080).
+  nginx:
+    image: nginx:alpine
+    container_name: fintivio-nginx
+    ports: ["80:80", "443:443"]
+    environment:
+      # Only DOMAIN is in the container env, so the official image's envsubst step
+      # substitutes ${DOMAIN} in *.template but leaves nginx vars ($host/$uri/...) intact.
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./tls:/etc/nginx/tls:ro
+    networks:
+      fintivio:
+        aliases:
+          # The gateway (and some inter-service defaults) call these hostnames on port 80.
+          - fintivio-user-management-api.application
+          - fintivio-dashboard-api.application
+          - fintivio-asset-management-api.application
+          - fintivio-entity-management-api.application
+          - fintivio-family-management-api.application
+          - fintivio-lifestyle-assets-api.application
+          - fintivio-private-investments-api.application
+          - fintivio-calendar-api.application
+          - fintivio-real-estate-api.application
+          - fintivio-accounts-api.application
+          - fintivio-public-markets-api.application
+          - fintivio-reports-api.application
+          - fintivio-brokerage-sync-api.application
+          - fintivio-provider-management-api.application
+          - fintivio-report-parser-api.application
+          - fintivio-document-api.application
+          - fintivio-notifications-api.application
+    depends_on: [fintivio-gateway, fintivio-main-ui]
+    restart: unless-stopped
+
+  # ─────────────────────────── Node backends ─────────────────────────────────
+  fintivio-gateway:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-gateway:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-gateway
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_started}
+      keycloak: {condition: service_started}
+
+  fintivio-user-management-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-user-management-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-user-management-api
+
+  fintivio-dashboard-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-dashboard-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-dashboard-api
+
+  fintivio-asset-management-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-asset-management-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-asset-management-api
+
+  fintivio-entity-management-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-entity-management-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-entity-management-api
+
+  fintivio-family-management-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-family-management-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-family-management-api
+
+  fintivio-lifestyle-assets-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-lifestyle-assets-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-lifestyle-assets-api
+
+  fintivio-private-investments-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-private-investments-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-private-investments-api
+
+  fintivio-calendar-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-calendar-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-calendar-api
+
+  fintivio-real-estate-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-real-estate-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-real-estate-api
+    environment:
+      DATABASE_SCHEMA: real_estate   # real-estate-api uses its own schema
+
+  fintivio-financial-job:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-financial-job:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-financial-job
+    # cron worker, no inbound port
+
+  # ─────────────────────────── Java backends ─────────────────────────────────
+  fintivio-accounts-api:
+    <<: *java-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-accounts-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-accounts-api
+
+  fintivio-public-markets-api:
+    <<: *java-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-public-markets-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-public-markets-api
+
+  fintivio-reports-api:
+    <<: *java-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-reports-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-reports-api
+
+  fintivio-brokerage-sync-api:
+    <<: *java-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-brokerage-sync-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-brokerage-sync-api
+
+  fintivio-provider-management-api:
+    <<: *java-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-provider-management-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-provider-management-api
+
+  fintivio-report-parser-api:
+    <<: *java-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-report-parser-api:${BACKEND_IMAGE_TAG}
+    container_name: fintivio-report-parser-api
+
+  # ── Optional dependencies (referenced by some services; enable if images exist) ──
+  # fintivio-document-api:
+  #   <<: *node-backend
+  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-document-api:${BACKEND_IMAGE_TAG}
+  #   container_name: fintivio-document-api
+  # fintivio-notifications-api:
+  #   <<: *node-backend
+  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-notifications-api:${BACKEND_IMAGE_TAG}
+  #   container_name: fintivio-notifications-api
+
+  # ─────────────────────────── Frontends ─────────────────────────────────────
+  fintivio-main-ui:
+    <<: *ui
+    image: fintivio-main-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-main-ui
+
+  fintivio-dashboard-ui:
+    <<: *ui
+    image: fintivio-dashboard-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-dashboard-ui
+  fintivio-reports-ui:
+    <<: *ui
+    image: fintivio-reports-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-reports-ui
+  fintivio-calendar-ui:
+    <<: *ui
+    image: fintivio-calendar-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-calendar-ui
+  fintivio-accounts-ui:
+    <<: *ui
+    image: fintivio-accounts-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-accounts-ui
+  fintivio-public-markets-ui:
+    <<: *ui
+    image: fintivio-public-markets-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-public-markets-ui
+  fintivio-private-investments-ui:
+    <<: *ui
+    image: fintivio-private-investments-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-private-investments-ui
+  fintivio-lifestyle-assets-ui:
+    <<: *ui
+    image: fintivio-lifestyle-assets-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-lifestyle-assets-ui
+  fintivio-provider-management-ui:
+    <<: *ui
+    image: fintivio-provider-management-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-provider-management-ui
+  fintivio-user-management-ui:
+    <<: *ui
+    image: fintivio-user-management-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-user-management-ui
+  fintivio-entity-management-ui:
+    <<: *ui
+    image: fintivio-entity-management-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-entity-management-ui
+  fintivio-family-management-ui:
+    <<: *ui
+    image: fintivio-family-management-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-family-management-ui
+  fintivio-real-estate-ui:
+    <<: *ui
+    image: fintivio-real-estate-ui:${FRONTEND_IMAGE_TAG}
+    container_name: fintivio-real-estate-ui
+
+networks:
+  fintivio:
+    name: fintivio-demo-net
+    driver: bridge
+
+volumes:
+  postgres_data: {name: fintivio-demo-postgres}
+  redis_data:    {name: fintivio-demo-redis}
+  minio_data:    {name: fintivio-demo-minio}
+  keycloak_data: {name: fintivio-demo-keycloak}
