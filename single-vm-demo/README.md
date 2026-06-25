@@ -4,6 +4,11 @@ One-time, single-VM deployment of the whole platform with Docker Compose + nginx
 Backends are pulled from Docker Hub as-is; the 13 frontends are rebuilt locally
 because they bake the domain in at build time.
 
+**This folder is self-contained — copy it to the VM and run the scripts in order.**
+The only external inputs you supply: `.env` (secrets), `db/backup/<prod dump>`, TLS,
+and the 13 UI repos checked out at `$REPO_ROOT` (needed only to *build* the frontend
+images — see `scripts/03`). `MEMORY.md` captures all the design context and gotchas.
+
 ## Routing model
 
 ```
@@ -37,8 +42,8 @@ so on host `fintivio.rosfin.tech` it automatically targets `gateway.fintivio.ros
 ## Run it
 
 ```bash
-# from infra-app-deploy/single-vm-demo
-cp .env.example .env          # edit secrets; set DATABASE_NAME / SPRING_DATASOURCE_URL to the restored app db
+# from this single-vm-demo folder (on the VM)
+cp .env.example .env          # edit secrets; DB is `fintivio` / schema `main` (already set)
 cp /path/to/prod-allbackup.sql db/backup/    # the prod dump
 ./scripts/01-provision-vm.sh  # docker + compose (skip if already installed)
 ./scripts/02-issue-tls.sh letsencrypt   # or: selfsigned

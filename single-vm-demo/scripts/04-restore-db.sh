@@ -23,6 +23,12 @@ echo "==> Restoring from: $BACKUP"
 
 PG="docker exec -i fintivio-postgres"
 SUPER="-U $POSTGRES_USER"
+ENVFILE="$(pwd)/.env"
+
+# patch_env KEY VALUE — set/replace KEY in .env safely (awk via ENVIRON, no escaping issues)
+patch_env(){
+  NEWVAL="$2" awk -F= -v k="$1" 'BEGIN{v=ENVIRON["NEWVAL"];d=0} $1==k{print k"="v;d=1;next}{print} END{if(!d)print k"="ENVIRON["NEWVAL"]}' "$ENVFILE" > "$ENVFILE.tmp" && mv "$ENVFILE.tmp" "$ENVFILE" && chmod 600 "$ENVFILE"
+}
 
 case "$BACKUP" in
   *.sql.gz)
@@ -53,6 +59,36 @@ UPDATE redirect_uris SET value = replace(replace(value,'app.fintivio.com','$DOMA
 UPDATE web_origins   SET value = replace(replace(value,'app.fintivio.com','$DOMAIN'),'dev.fintivio.com','$DOMAIN');
 SQL
   echo "   Done. (Issuer/hostname itself is forced by KC_HOSTNAME_URL=https://auth.$DOMAIN in compose.)"
+
+  # ── Fallback: recover the gateway client (clientId/uuid/secret) from the restored
+  #    realm and write it into .env, if those values are still placeholders. ───────
+  REALM="${KEYCLOAK_REALM:-fintivio}"
+  case "${KEYCLOAK_SECRET:-}" in
+    ''|FILL_FROM_KV*)
+      echo "==> Recovering Keycloak client for realm '$REALM' from restored DB"
+      cflt=""; case "${KEYCLOAK_CLIENT:-}" in ''|FILL_FROM_KV*) ;; *) cflt="AND c.client_id='${KEYCLOAK_CLIENT}'";; esac
+      rows="$($PG psql $SUPER -d "$KC_DB" -tAF '|' -c \
+        "SELECT c.client_id, c.id, coalesce(c.secret,'') FROM client c JOIN realm r ON c.realm_id=r.id \
+         WHERE r.name='$REALM' AND c.public_client=false AND c.secret IS NOT NULL \
+         AND c.client_id NOT IN ('realm-management','broker','account','account-console','security-admin-console','admin-cli') \
+         $cflt ORDER BY c.client_id" 2>/dev/null || true)"
+      n="$(printf '%s\n' "$rows" | grep -c . || true)"
+      if [ "$n" = 1 ]; then
+        patch_env KEYCLOAK_REALM        "$REALM"
+        patch_env KEYCLOAK_CLIENT       "$(printf '%s' "$rows" | cut -d'|' -f1)"
+        patch_env KEYCLOAK_CLIENT_UUID  "$(printf '%s' "$rows" | cut -d'|' -f2)"
+        patch_env KEYCLOAK_SECRET       "$(printf '%s' "$rows" | cut -d'|' -f3)"
+        echo "   filled KEYCLOAK_CLIENT / _CLIENT_UUID / _SECRET in .env from DB"
+        echo "   (05-up.sh starts the gateway AFTER this, so it picks up the values)"
+      elif [ "$n" = 0 ]; then
+        echo "   !! no confidential client with a secret found in realm '$REALM' — set KEYCLOAK_CLIENT in .env manually"
+      else
+        echo "   multiple confidential clients found — set KEYCLOAK_CLIENT in .env to one of these, then re-run:"
+        printf '%s\n' "$rows" | cut -d'|' -f1 | sed 's/^/     - /'
+      fi
+      ;;
+    *) echo "==> KEYCLOAK_SECRET already set in .env — leaving it." ;;
+  esac
 else
   echo "==> No '$KC_DB' database in the backup — Keycloak will import the bootstrap realm instead."
 fi

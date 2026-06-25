@@ -3,14 +3,15 @@
 # Frontend images bake the domain at build time, so they CANNOT be reused from
 # Docker Hub (those point at *.fintivio.com). Backends, by contrast, are pulled as-is.
 #
-# Layout assumption: all repos are cloned (on branch demo-version) side-by-side under
-# $REPO_ROOT. Defaults to the parent of infra-app-deploy.
+# Layout assumption: the UI repos are cloned (on branch demo-version) side-by-side
+# under $REPO_ROOT. Defaults to the parent of this single-vm-demo folder.
+# The frontend Dockerfile is bundled here (frontend/Dockerfile) — no external dep.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
 
-REPO_ROOT="${REPO_ROOT:-$(cd ../.. && pwd)}"
-DOCKERFILE="$(cd .. && pwd)/frontend/Dockerfile"   # infra-app-deploy/frontend/Dockerfile
+REPO_ROOT="${REPO_ROOT:-$(cd .. && pwd)}"
+DOCKERFILE="$(pwd)/frontend/Dockerfile"   # bundled in this folder
 TAG="${FRONTEND_IMAGE_TAG:-demo}"
 
 UIS=(
