@@ -31,18 +31,25 @@ so on host `fintivio.rosfin.tech` it automatically targets `gateway.fintivio.ros
    - `*.fintivio.rosfin.tech`          (wildcard A — covers remotes/gateway/auth/files)
 3. All repos cloned **on branch `demo-version`** side-by-side in one directory
    (`$REPO_ROOT`), including `infra-app-deploy` and `fintivio-database-migrations`.
+4. The **full prod DB backup** placed in `db/backup/` (a `pg_dumpall` plain `.sql`/`.sql.gz`,
+   or a custom `.dump`). The stack restores this — real data + the real Keycloak realm.
 
 ## Run it
 
 ```bash
 # from infra-app-deploy/single-vm-demo
-cp .env.example .env          # then edit secrets (Postgres/Redis/MinIO/Keycloak, EODHD, Keycloak client secret)
+cp .env.example .env          # edit secrets; set DATABASE_NAME / SPRING_DATASOURCE_URL to the restored app db
+cp /path/to/prod-allbackup.sql db/backup/    # the prod dump
 ./scripts/01-provision-vm.sh  # docker + compose (skip if already installed)
 ./scripts/02-issue-tls.sh letsencrypt   # or: selfsigned
 ./scripts/03-build-frontends.sh         # builds the 13 UI images :demo
-./scripts/05-up.sh            # infra → DB init → apps  (calls 04-init-db.sh)
+./scripts/05-up.sh            # infra → restore prod DB → keycloak → apps
 ./scripts/06-healthcheck.sh   # smoke test
 ```
+
+DB strategy: `05-up.sh` **restores** the dump in `db/backup/` via `04-restore-db.sh`
+by default. For a fresh, data-less stack instead, run `FRESH_DB=1 ./scripts/05-up.sh`
+(uses `90-fresh-db-no-backup.sh` + the bootstrap Keycloak realm).
 
 `REPO_ROOT` defaults to the parent of `infra-app-deploy`; override if your clones
 live elsewhere: `REPO_ROOT=/srv/fintivio ./scripts/03-build-frontends.sh`.
@@ -55,9 +62,11 @@ live elsewhere: `REPO_ROOT=/srv/fintivio ./scripts/03-build-frontends.sh`.
 | `.env.example` | single source of truth for every service's env |
 | `nginx/templates/00-public.conf.template` | public TLS vhosts + gateway CORS |
 | `nginx/templates/10-internal.conf.template` | `*.application` → `svc:8080` resolver |
-| `db/init/00-bootstrap.sql` | schemas + keycloak DB (first-boot only) |
-| `keycloak/import/realm-fintivio.json` | bootstrap realm (replace with real export — see keycloak/README.md) |
-| `scripts/0*.sh` | provision → TLS → build FE → init DB → up → healthcheck |
+| `db/backup/` | drop the prod dump here (gitignored) |
+| `scripts/04-restore-db.sh` | restore prod dump + rewrite Keycloak URLs to $DOMAIN |
+| `scripts/90-fresh-db-no-backup.sh` | alt: schemas + migrations when there's no backup |
+| `keycloak/import/realm-fintivio.json` | bootstrap realm — used ONLY in the FRESH path |
+| `scripts/0*.sh` | provision → TLS → build FE → restore DB → up → healthcheck |
 
 ## Code changes that back this (already pushed to `demo-version`)
 
@@ -74,11 +83,15 @@ live elsewhere: `REPO_ROOT=/srv/fintivio ./scripts/03-build-frontends.sh`.
    `AZURE_KEYVAULT_URL` empty they must fall back to `SPRING_DATASOURCE_*` + `JASYPT_ENCRYPTION_KEY`
    env. If one refuses to boot, check its logs — it may need the Key Vault property source
    explicitly disabled, or the secret provided via env. **Most likely point of failure.**
-2. **DB completeness.** `fintivio-database-migrations` seeds schema `main` + v1.0 data.
-   Whether it creates *every* table for *every* service (vs. ORM auto-create) is unverified —
-   watch for "relation does not exist" on first boot and re-run/extend migrations.
-3. **Keycloak realm.** The bundled realm is minimal (login works, but not the full
-   role/access tree). Export the real realm for a faithful demo (keycloak/README.md).
+2. **DB name match.** Restoring the prod dump removes the "completeness" risk (real
+   tables + data). App database is `fintivio`, schema `main` (already set in `.env`).
+   If a service logs "database does not exist", re-check `DATABASE_NAME` /
+   `SPRING_DATASOURCE_URL` against the restore output.
+3. **Keycloak realm comes from the backup.** `04-restore-db.sh` rewrites client
+   redirect URIs/web origins `*.fintivio.com → $DOMAIN`; the issuer is forced by
+   `KC_HOSTNAME_URL`. If the KC tables differ by version, the rewrite warns — then
+   fix redirect URIs/web origins in the admin console. (The bootstrap realm import
+   only applies in the `FRESH_DB=1` path.)
 4. **Internal hop is HTTP.** Assumes the gateway sets no `x-secure-req` header internally
    (so it calls `:80`). If you see it calling `https`, add a `:443` server to the internal
    nginx template with the self-signed cert.

@@ -1,4 +1,6 @@
-# Never commit live secrets or certs
+# Never commit live secrets, certs, or DB dumps
 .env
 tls/*.pem
 tls/*.key
+db/backup/*
+!db/backup/.gitkeep
