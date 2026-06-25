@@ -1,5 +1,4 @@
 {
-  "_comment": "MINIMAL bootstrap realm so login works on a fresh demo. PREFER replacing this with a real export from the existing Keycloak (see ../README.md) so the full role/access tree matches the apps. Keep clientId/secret/id in sync with .env (KEYCLOAK_CLIENT / KEYCLOAK_SECRET / KEYCLOAK_CLIENT_UUID).",
   "realm": "fintivio",
   "enabled": true,
   "sslRequired": "none",
@@ -26,15 +25,38 @@
       "webOrigins": [
         "https://fintivio.rosfin.tech",
         "https://remotes.fintivio.rosfin.tech"
+      ],
+      "protocolMappers": [
+        {
+          "name": "demo-organizations",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "config": {
+            "claim.name": "organization*",
+            "claim.value": "{\"00000000-0000-0000-0000-0000000000b1\":{\"id\":\"00000000-0000-0000-0000-0000000000b1\",\"displayName\":\"Demo Organization\"}}",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
       ]
     }
   ],
   "roles": {
     "realm": [
-      { "name": "administrator" },
-      { "name": "family" },
-      { "name": "analyst" },
-      { "name": "outside-user" }
+      {
+        "name": "administrator"
+      },
+      {
+        "name": "family"
+      },
+      {
+        "name": "analyst"
+      },
+      {
+        "name": "outside-user"
+      }
     ]
   },
   "users": [
@@ -47,9 +69,15 @@
       "firstName": "Demo",
       "lastName": "User",
       "credentials": [
-        { "type": "password", "value": "Demo!2026Fintivio", "temporary": false }
+        {
+          "type": "password",
+          "value": "Demo!2026Fintivio",
+          "temporary": false
+        }
       ],
-      "realmRoles": ["administrator"]
+      "realmRoles": [
+        "administrator"
+      ]
     }
   ]
 }

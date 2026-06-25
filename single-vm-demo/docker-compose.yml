@@ -29,6 +29,11 @@ x-java-backend: &java-backend
   # Spring reads SERVER_PORT/SPRING_DATASOURCE_* from .env. Stays on 8080 (approach B).
   # MaxRAMPercentage=75% of THIS limit -> ~1.1 GB heap (not 75% of the 36 GB host).
   mem_limit: 1536m
+  environment:
+    # Node images need AZURE_KEYVAULT_URL non-empty (boot hydration throws on empty, then
+    # skips every key since all are set in .env). Java's Spring KV starter would try to
+    # CONNECT to a non-empty URL, so force it back to empty here -> Java skips KV gracefully.
+    AZURE_KEYVAULT_URL: ""
   depends_on:
     postgres: {condition: service_healthy}
 
@@ -49,11 +54,15 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/data/pgdata
-    command: ["postgres", "-c", "max_connections=512"]
+    # SSL enabled: the gateway/document/notifications Node images hardcode ssl:true
+    # (rejectUnauthorized:false), so Postgres must offer SSL. Self-signed cert in ./pgcerts
+    # (key owned by uid 999 = the postgres user). Non-SSL services still connect fine.
+    command: ["postgres","-c","max_connections=512","-c","ssl=on","-c","ssl_cert_file=/pgcerts/server.crt","-c","ssl_key_file=/pgcerts/server.key"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Runs ONCE on an empty data dir: creates schemas (main/sandbox/real_estate) + keycloak DB.
       - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./pgcerts:/pgcerts:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -98,12 +107,10 @@ services:
       KC_DB_PASSWORD: ${KC_DB_PASSWORD}
       KC_HTTP_PORT: "8080"
       KC_HTTP_ENABLED: "true"
-      KC_PROXY: edge                       # behind nginx TLS
-      KC_HOSTNAME_URL: "https://auth.${DOMAIN}"
-      KC_HOSTNAME_FRONTEND_URL: "https://auth.${DOMAIN}"
-      KC_HOSTNAME_ADMIN_URL: "https://auth.${DOMAIN}"
+      # Keycloak 26 syntax (v1 hostname-url/proxy options are deprecated and emit http issuer).
+      KC_PROXY_HEADERS: xforwarded         # trust nginx X-Forwarded-Proto=https
+      KC_HOSTNAME: "https://auth.${DOMAIN}"
       KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
     volumes:
       - keycloak_data:/opt/keycloak/data
       - ./keycloak/import:/opt/keycloak/data/import:ro
@@ -153,7 +160,7 @@ services:
   # ─────────────────────────── Node backends ─────────────────────────────────
   fintivio-gateway:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-gateway:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-gateway:RELEASE-176
     container_name: fintivio-gateway
     depends_on:
       postgres: {condition: service_healthy}
@@ -162,96 +169,98 @@ services:
 
   fintivio-user-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-user-management-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-user-management-api:RELEASE-123
     container_name: fintivio-user-management-api
 
   fintivio-dashboard-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-dashboard-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-dashboard-api:RELEASE-85
     container_name: fintivio-dashboard-api
 
   fintivio-asset-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-asset-management-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-asset-management-api:RELEASE-112
     container_name: fintivio-asset-management-api
 
   fintivio-entity-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-entity-management-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-entity-management-api:RELEASE-37
     container_name: fintivio-entity-management-api
 
   fintivio-family-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-family-management-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-family-management-api:RELEASE-54
     container_name: fintivio-family-management-api
 
   fintivio-lifestyle-assets-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-lifestyle-assets-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-lifestyle-assets-api:RELEASE-117
     container_name: fintivio-lifestyle-assets-api
 
   fintivio-private-investments-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-private-investments-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-private-investments-api:RELEASE-119
     container_name: fintivio-private-investments-api
 
   fintivio-calendar-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-calendar-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-calendar-api:RELEASE-54
     container_name: fintivio-calendar-api
 
   fintivio-real-estate-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-real-estate-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-real-estate-api:RELEASE-21
     container_name: fintivio-real-estate-api
     environment:
       DATABASE_SCHEMA: real_estate   # real-estate-api uses its own schema
 
   fintivio-financial-job:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-financial-job:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-financial-job:RELEASE-42
     container_name: fintivio-financial-job
     # cron worker, no inbound port
 
   # ─────────────────────────── Java backends ─────────────────────────────────
   fintivio-accounts-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-accounts-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-accounts-api:latest
     container_name: fintivio-accounts-api
 
   fintivio-public-markets-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-public-markets-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-public-markets-api:latest
     container_name: fintivio-public-markets-api
 
   fintivio-reports-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-reports-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-reports-api:latest
     container_name: fintivio-reports-api
 
   fintivio-brokerage-sync-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-brokerage-sync-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-brokerage-sync-api:latest
     container_name: fintivio-brokerage-sync-api
 
   fintivio-provider-management-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-provider-management-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-provider-management-api:latest
     container_name: fintivio-provider-management-api
 
   fintivio-report-parser-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-report-parser-api:${BACKEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-report-parser-api:latest
     container_name: fintivio-report-parser-api
 
   # ── Optional dependencies (referenced by some services; enable if images exist) ──
+  # DISABLED (optional): document-api needs a specific MinIO endpoint config;
+  # notifications-api hard-requires real email creds. Enable once those are provided.
   # fintivio-document-api:
   #   <<: *node-backend
-  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-document-api:${BACKEND_IMAGE_TAG}
+  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-document-api:RELEASE-66
   #   container_name: fintivio-document-api
   # fintivio-notifications-api:
   #   <<: *node-backend
-  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-notifications-api:${BACKEND_IMAGE_TAG}
+  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-notifications-api:RELEASE-20
   #   container_name: fintivio-notifications-api
 
   # ─────────────────────────── Frontends ─────────────────────────────────────
