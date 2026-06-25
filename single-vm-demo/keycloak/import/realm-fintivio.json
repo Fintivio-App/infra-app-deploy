@@ -13,7 +13,7 @@
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
-      "secret": "CHANGE_ME_client_secret",
+      "secret": "fY8d2Lq7Rs4Tv9Xz1Bc3Nm5Pk6Hj0Wg",
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": true,
@@ -39,6 +39,7 @@
   },
   "users": [
     {
+      "id": "11111111-2222-3333-4444-555555555555",
       "username": "demo",
       "enabled": true,
       "email": "demo@fintivio.rosfin.tech",
@@ -46,7 +47,7 @@
       "firstName": "Demo",
       "lastName": "User",
       "credentials": [
-        { "type": "password", "value": "CHANGE_ME_demo_pass", "temporary": false }
+        { "type": "password", "value": "Demo!2026Fintivio", "temporary": false }
       ],
       "realmRoles": ["administrator"]
     }
