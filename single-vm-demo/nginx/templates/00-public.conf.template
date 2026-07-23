@@ -74,7 +74,7 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_buffer_size 16k;
         proxy_buffers 8 16k;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 300s;   # AI extract calls (CPU inference) can take minutes
     }
 }
 

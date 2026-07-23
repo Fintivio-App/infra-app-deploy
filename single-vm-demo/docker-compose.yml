@@ -154,6 +154,7 @@ services:
           - fintivio-report-parser-api.application
           - fintivio-document-api.application
           - fintivio-notifications-api.application
+          - fintivio-ai-orchestrator.application
     depends_on: [fintivio-gateway, fintivio-main-ui]
     restart: unless-stopped
 
@@ -220,6 +221,35 @@ services:
     container_name: fintivio-financial-job
     # cron worker, no inbound port
 
+  # ─────────────────────────── AI (Phase 1.5 document extraction) ─────────────
+  # CPU-only inference; qwen2.5:7b-instruct Q4 needs ~5 GB. Model is pulled once:
+  #   docker exec fintivio-ollama ollama pull qwen2.5:7b-instruct
+  ollama:
+    image: ollama/ollama:latest
+    container_name: fintivio-ollama
+    mem_limit: 8g
+    volumes: [ollama_data:/root/.ollama]
+    networks: [fintivio]
+    restart: unless-stopped
+
+  fintivio-ai-orchestrator:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-ai-orchestrator:demo
+    container_name: fintivio-ai-orchestrator
+    mem_limit: 1g              # tesseract.js OCR spikes above the 512m anchor default
+    environment:
+      AZURE_KEYVAULT_URL: ""   # orchestrator skips KV hydration on empty (dummy URL would crash boot)
+      DATABASE_SCHEMA: ai      # own schema; created by db/ai/ai-demo-setup.sql
+      GATEWAY_URL: http://fintivio-gateway:8080
+      INFERENCE_URL: http://ollama:11434/v1
+      INFERENCE_MODEL: qwen2.5:7b-instruct
+      EXTRACT_TIMEOUT_MS: "240000"     # CPU inference is minutes, not seconds
+      EXTRACT_MAX_TEXT_CHARS: "12000"  # keep prompts small enough for CPU latency
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_started}
+      ollama:   {condition: service_started}
+
   # ─────────────────────────── Java backends ─────────────────────────────────
   fintivio-accounts-api:
     <<: *java-backend
@@ -252,12 +282,19 @@ services:
     container_name: fintivio-report-parser-api
 
   # ── Optional dependencies (referenced by some services; enable if images exist) ──
-  # DISABLED (optional): document-api needs a specific MinIO endpoint config;
-  # notifications-api hard-requires real email creds. Enable once those are provided.
-  # fintivio-document-api:
-  #   <<: *node-backend
-  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-document-api:RELEASE-66
-  #   container_name: fintivio-document-api
+  # ENABLED 2026-07-23: document-api is needed by the AI prefill flows (UIs persist the
+  # uploaded documents after create/submit). Uses the stack MinIO.
+  fintivio-document-api:
+    <<: *node-backend
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-document-api:RELEASE-66
+    container_name: fintivio-document-api
+    environment:
+      MINIO_EXTERNAL_HOST: files.${DOMAIN}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_started}
+      minio:    {condition: service_started}
+  # DISABLED (optional): notifications-api hard-requires real email creds.
   # fintivio-notifications-api:
   #   <<: *node-backend
   #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-notifications-api:RELEASE-20
@@ -328,3 +365,4 @@ volumes:
   redis_data:    {name: fintivio-demo-redis}
   minio_data:    {name: fintivio-demo-minio}
   keycloak_data: {name: fintivio-demo-keycloak}
+  ollama_data:   {name: fintivio-demo-ollama}
