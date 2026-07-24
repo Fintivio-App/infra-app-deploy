@@ -357,6 +357,12 @@ services:
     <<: *ui
     image: fintivio-real-estate-ui:${FRONTEND_IMAGE_TAG}
     container_name: fintivio-real-estate-ui
+  # AI assistant panel (Phase 2). CI-built; pin the SNAPSHOT-main-<run#> tag at deploy time.
+  # The remotes vhost routes /ai-chat/* here automatically (generic /{app} -> fintivio-{app}-ui).
+  fintivio-ai-chat-ui:
+    <<: *ui
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-ai-chat-ui:SNAPSHOT-main-1
+    container_name: fintivio-ai-chat-ui
 
 networks:
   fintivio:
