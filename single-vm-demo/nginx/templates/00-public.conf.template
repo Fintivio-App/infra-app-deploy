@@ -4,6 +4,14 @@
 ssl_protocols TLSv1.2 TLSv1.3;
 ssl_session_cache shared:SSL:10m;
 
+# Re-resolve upstream container names at runtime (Docker's embedded DNS). Without this, a
+# literal hostname in proxy_pass is resolved ONCE at nginx start and cached forever — so when
+# a container is recreated (new IP) nginx keeps sending to the stale IP, which may now belong
+# to a DIFFERENT container. Every proxy_pass below therefore uses a $variable, which forces
+# per-request resolution honouring this TTL. (Learned the hard way 2026-07-24: gateway traffic
+# was landing on the AI orchestrator after container churn.)
+resolver 127.0.0.11 valid=10s ipv6=off;
+
 # ── HTTP :80 — ACME + redirect to HTTPS (default for unmatched hosts) ─────────
 server {
     listen 80 default_server;
@@ -21,7 +29,8 @@ server {
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
     client_max_body_size 200m;
     location / {
-        proxy_pass http://fintivio-main-ui:80;
+        set $mainui fintivio-main-ui;
+        proxy_pass http://$mainui:80;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -67,7 +76,8 @@ server {
         add_header Access-Control-Allow-Methods "GET,POST,PUT,PATCH,DELETE,OPTIONS" always;
         add_header Access-Control-Allow-Headers "Content-Type,Authorization,X-Requested-With,request-id,audit-module,audit-description,organization-id,x-external-file,x-secure-req" always;
         if ($request_method = OPTIONS) { return 204; }
-        proxy_pass http://fintivio-gateway:8080;
+        set $gw fintivio-gateway;
+        proxy_pass http://$gw:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -86,7 +96,8 @@ server {
     ssl_certificate     /etc/nginx/tls/fullchain.pem;
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
     location / {
-        proxy_pass http://fintivio-keycloak:8080;
+        set $kc fintivio-keycloak;
+        proxy_pass http://$kc:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -103,7 +114,8 @@ server {
     ssl_certificate_key /etc/nginx/tls/privkey.pem;
     client_max_body_size 200m;
     location / {
-        proxy_pass http://fintivio-minio:9000;
+        set $minio fintivio-minio;
+        proxy_pass http://$minio:9000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
