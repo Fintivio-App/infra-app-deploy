@@ -223,11 +223,13 @@ services:
 
   # ─────────────────────────── AI (Phase 1.5 document extraction) ─────────────
   # CPU-only inference; qwen2.5:7b-instruct Q4 needs ~5 GB. Model is pulled once:
-  #   docker exec fintivio-ollama ollama pull qwen2.5:7b-instruct
+  #   docker exec fintivio-ollama ollama pull qwen2.5:3b-instruct
   ollama:
     image: ollama/ollama:latest
     container_name: fintivio-ollama
     mem_limit: 8g
+    environment:
+      OLLAMA_KEEP_ALIVE: "-1"   # model stays resident — cold loads cost ~20s per extraction
     volumes: [ollama_data:/root/.ollama]
     networks: [fintivio]
     restart: unless-stopped
@@ -242,9 +244,9 @@ services:
       DATABASE_SCHEMA: ai      # own schema; created by db/ai/ai-demo-setup.sql
       GATEWAY_URL: http://fintivio-gateway:8080
       INFERENCE_URL: http://ollama:11434/v1
-      INFERENCE_MODEL: qwen2.5:7b-instruct
+      INFERENCE_MODEL: qwen2.5:3b-instruct
       EXTRACT_TIMEOUT_MS: "240000"     # CPU inference is minutes, not seconds
-      EXTRACT_MAX_TEXT_CHARS: "12000"  # keep prompts small enough for CPU latency
+      EXTRACT_MAX_TEXT_CHARS: "8000"   # keep prompts small — CPU prefill is the latency driver
     depends_on:
       postgres: {condition: service_healthy}
       redis:    {condition: service_started}
