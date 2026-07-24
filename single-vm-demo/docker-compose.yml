@@ -177,6 +177,14 @@ services:
     <<: *node-backend
     image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-dashboard-api:RELEASE-85
     container_name: fintivio-dashboard-api
+    # The /get/aggregate/* fan-out calls sibling services directly (not via the gateway), so the
+    # hosts must be the real container names on :8080 — the .application aliases only listen on :80.
+    environment:
+      PUBLIC_MARKETS_API_HOST: fintivio-public-markets-api
+      REAL_ESTATE_API_HOST: fintivio-real-estate-api
+      LIFESTYLE_ASSETS_API_HOST: fintivio-lifestyle-assets-api
+      ACCOUNTS_API_HOST: fintivio-accounts-api
+      PRIVATE_INVESTMENTS_API_HOST: fintivio-private-investments-api
 
   fintivio-asset-management-api:
     <<: *node-backend
