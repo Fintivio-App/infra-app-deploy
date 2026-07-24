@@ -123,7 +123,7 @@ services:
   # Public TLS vhosts + internal `.application` resolution (Host -> svc:8080).
   nginx:
     image: nginx:alpine
-    container_name: fintivio-nginx
+    container_name: nginx-shared
     mem_limit: 256m
     ports: ["80:80", "443:443"]
     environment:
@@ -161,7 +161,7 @@ services:
   # ─────────────────────────── Node backends ─────────────────────────────────
   fintivio-gateway:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-gateway:SNAPSHOT-feat.ai-orchestrator-sse-ratelimit-177  # SSE pass-through + AI rate limit (sha fc7fc80, same as main)
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-gateway:RELEASE-176
     container_name: fintivio-gateway
     depends_on:
       postgres: {condition: service_healthy}
@@ -170,121 +170,106 @@ services:
 
   fintivio-user-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-user-management-api:RELEASE-123
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-user-management-api:SNAPSHOT-demo-version-129
     container_name: fintivio-user-management-api
 
   fintivio-dashboard-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-dashboard-api:RELEASE-85
-    container_name: fintivio-dashboard-api
-    # The /get/aggregate/* fan-out calls sibling services directly (not via the gateway), so the
-    # hosts must be the real container names on :8080 — the .application aliases only listen on :80.
     environment:
       PUBLIC_MARKETS_API_HOST: fintivio-public-markets-api
       REAL_ESTATE_API_HOST: fintivio-real-estate-api
       LIFESTYLE_ASSETS_API_HOST: fintivio-lifestyle-assets-api
       ACCOUNTS_API_HOST: fintivio-accounts-api
       PRIVATE_INVESTMENTS_API_HOST: fintivio-private-investments-api
+    image: admacc1/fintivio-dashboard-api:SNAPSHOT-feat.ai-95
+    container_name: fintivio-dashboard-api
 
   fintivio-asset-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-asset-management-api:RELEASE-112
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-asset-management-api:SNAPSHOT-fix-pre-client-audit-114
     container_name: fintivio-asset-management-api
 
   fintivio-entity-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-entity-management-api:RELEASE-37
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-entity-management-api:SNAPSHOT-fix.pre-client-audit-39
     container_name: fintivio-entity-management-api
 
   fintivio-family-management-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-family-management-api:RELEASE-54
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-family-management-api:SNAPSHOT-fix.pre-client-audit-56
     container_name: fintivio-family-management-api
 
   fintivio-lifestyle-assets-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-lifestyle-assets-api:RELEASE-117
+    image: admacc1/fintivio-lifestyle-assets-api:SNAPSHOT-fix.pre-client-audit-50
     container_name: fintivio-lifestyle-assets-api
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
 
   fintivio-private-investments-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-private-investments-api:RELEASE-119
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-private-investments-api:SNAPSHOT-fix.pre-client-audit-124
     container_name: fintivio-private-investments-api
 
   fintivio-calendar-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-calendar-api:RELEASE-54
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-calendar-api:SNAPSHOT-fix.pre-client-audit-56
     container_name: fintivio-calendar-api
 
   fintivio-real-estate-api:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-real-estate-api:RELEASE-21
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-real-estate-api:SNAPSHOT-fix.pre-client-audit-28
     container_name: fintivio-real-estate-api
     environment:
       DATABASE_SCHEMA: real_estate   # real-estate-api uses its own schema
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
 
   fintivio-financial-job:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-financial-job:RELEASE-42
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-financial-job:SNAPSHOT-feat.snapshots-45
     container_name: fintivio-financial-job
     # cron worker, no inbound port
-
-  # ─────────────────────────── AI (Phase 1.5 document extraction) ─────────────
-  # CPU-only inference; qwen2.5:7b-instruct Q4 needs ~5 GB. Model is pulled once:
-  #   docker exec fintivio-ollama ollama pull qwen2.5:3b-instruct
-  ollama:
-    image: ollama/ollama:latest
-    container_name: fintivio-ollama
-    mem_limit: 8g
-    environment:
-      OLLAMA_KEEP_ALIVE: "-1"   # model stays resident — cold loads cost ~20s per extraction
-      OLLAMA_CONTEXT_LENGTH: "8192"  # large-schema prompts brush past the 4096 default
-    volumes: [ollama_data:/root/.ollama]
-    networks: [fintivio]
-    restart: unless-stopped
-
-  fintivio-ai-orchestrator:
-    <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-ai-orchestrator:demo
-    container_name: fintivio-ai-orchestrator
-    mem_limit: 1g              # tesseract.js OCR spikes above the 512m anchor default
-    environment:
-      AZURE_KEYVAULT_URL: ""   # orchestrator skips KV hydration on empty (dummy URL would crash boot)
-      DATABASE_SCHEMA: ai      # own schema; created by db/ai/ai-demo-setup.sql
-      GATEWAY_URL: http://fintivio-gateway:8080
-      INFERENCE_URL: http://ollama:11434/v1
-      INFERENCE_MODEL: qwen2.5:3b-instruct
-      EXTRACT_TIMEOUT_MS: "240000"     # CPU inference is minutes, not seconds
-      EXTRACT_MAX_TEXT_CHARS: "8000"   # keep prompts small — CPU prefill is the latency driver
-    depends_on:
-      postgres: {condition: service_healthy}
-      redis:    {condition: service_started}
-      ollama:   {condition: service_started}
 
   # ─────────────────────────── Java backends ─────────────────────────────────
   fintivio-accounts-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-accounts-api:latest
+    image: admacc1/fintivio-accounts-api:SNAPSHOT-fix.pre-client-audit-132
     container_name: fintivio-accounts-api
+
+  fintivio-holding-snapshot-job-api:
+    <<: *java-backend
+    image: admacc1/fintivio-holding-snapshot-job-api:SNAPSHOT-fix.pre-client-audit-22
+    container_name: fintivio-holding-snapshot-job-api
+    environment:
+      AZURE_KEYVAULT_URL: ""
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
 
   fintivio-public-markets-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-public-markets-api:latest
+    image: admacc1/fintivio-public-markets-api:SNAPSHOT-fix.pre-client-audit-65
     container_name: fintivio-public-markets-api
 
   fintivio-reports-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-reports-api:latest
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-reports-api:SNAPSHOT-fix.pre-client-audit-48
     container_name: fintivio-reports-api
+    environment:
+      AZURE_KEYVAULT_URL: ""
+      MINIO_URL: "http://fintivio-document-api:8080"
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
 
   fintivio-brokerage-sync-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-brokerage-sync-api:latest
+    image: admacc1/fintivio-brokerage-sync-api:SNAPSHOT-fix.pre-client-audit-25
     container_name: fintivio-brokerage-sync-api
 
   fintivio-provider-management-api:
     <<: *java-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-provider-management-api:latest
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-provider-management-api:SNAPSHOT-demo-version-41
     container_name: fintivio-provider-management-api
 
   fintivio-report-parser-api:
@@ -292,20 +277,21 @@ services:
     image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-report-parser-api:latest
     container_name: fintivio-report-parser-api
 
-  # ── Optional dependencies (referenced by some services; enable if images exist) ──
-  # ENABLED 2026-07-23: document-api is needed by the AI prefill flows (UIs persist the
-  # uploaded documents after create/submit). Uses the stack MinIO.
   fintivio-document-api:
     <<: *node-backend
     image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-document-api:RELEASE-66
     container_name: fintivio-document-api
     environment:
-      MINIO_EXTERNAL_HOST: files.${DOMAIN}
-    depends_on:
-      postgres: {condition: service_healthy}
-      redis:    {condition: service_started}
-      minio:    {condition: service_started}
-  # DISABLED (optional): notifications-api hard-requires real email creds.
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      MINIO_EXTERNAL_HOST: "files.fintivio.rosfin.tech"
+
+  # ── Optional dependencies (referenced by some services; enable if images exist) ──
+  # DISABLED (optional): document-api needs a specific MinIO endpoint config;
+  # notifications-api hard-requires real email creds. Enable once those are provided.
+  # fintivio-document-api:
+  #   <<: *node-backend
+  #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-document-api:RELEASE-66
+  #   container_name: fintivio-document-api
   # fintivio-notifications-api:
   #   <<: *node-backend
   #   image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-notifications-api:RELEASE-20
@@ -314,63 +300,57 @@ services:
   # ─────────────────────────── Frontends ─────────────────────────────────────
   fintivio-main-ui:
     <<: *ui
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-main-ui:SNAPSHOT-demo-version-195  # CI build w/ ai-chat remote + assistant panel slot
+    image: admacc1/fintivio-main-ui:SNAPSHOT-demo-version-195
     container_name: fintivio-main-ui
 
   fintivio-dashboard-ui:
     <<: *ui
-    image: fintivio-dashboard-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-dashboard-ui:SNAPSHOT-demo-version-52
     container_name: fintivio-dashboard-ui
   fintivio-reports-ui:
     <<: *ui
-    image: fintivio-reports-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-reports-ui:SNAPSHOT-demo-version-48
     container_name: fintivio-reports-ui
   fintivio-calendar-ui:
     <<: *ui
-    image: fintivio-calendar-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-calendar-ui:SNAPSHOT-demo-version-48
     container_name: fintivio-calendar-ui
   fintivio-accounts-ui:
     <<: *ui
-    image: fintivio-accounts-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-accounts-ui:SNAPSHOT-demo-version-122
     container_name: fintivio-accounts-ui
   fintivio-public-markets-ui:
     <<: *ui
-    image: fintivio-public-markets-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-public-markets-ui:SNAPSHOT-demo-version-76
     container_name: fintivio-public-markets-ui
   fintivio-private-investments-ui:
     <<: *ui
-    image: fintivio-private-investments-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-private-investments-ui:SNAPSHOT-demo-version-89
     container_name: fintivio-private-investments-ui
   fintivio-lifestyle-assets-ui:
     <<: *ui
-    image: fintivio-lifestyle-assets-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-lifestyle-assets-ui:SNAPSHOT-demo-version-106
     container_name: fintivio-lifestyle-assets-ui
   fintivio-provider-management-ui:
     <<: *ui
-    image: fintivio-provider-management-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-provider-management-ui:SNAPSHOT-demo-version-126
     container_name: fintivio-provider-management-ui
   fintivio-user-management-ui:
     <<: *ui
-    image: fintivio-user-management-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-user-management-ui:SNAPSHOT-demo-version-73
     container_name: fintivio-user-management-ui
   fintivio-entity-management-ui:
     <<: *ui
-    image: fintivio-entity-management-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-entity-management-ui:SNAPSHOT-demo-version-104
     container_name: fintivio-entity-management-ui
   fintivio-family-management-ui:
     <<: *ui
-    image: fintivio-family-management-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-family-management-ui:SNAPSHOT-demo-version-134
     container_name: fintivio-family-management-ui
   fintivio-real-estate-ui:
     <<: *ui
-    image: fintivio-real-estate-ui:${FRONTEND_IMAGE_TAG}
+    image: admacc1/fintivio-real-estate-ui:SNAPSHOT-demo-version-39
     container_name: fintivio-real-estate-ui
-  # AI assistant panel (Phase 2). CI-built; pin the SNAPSHOT-main-<run#> tag at deploy time.
-  # The remotes vhost routes /ai-chat/* here automatically (generic /{app} -> fintivio-{app}-ui).
-  fintivio-ai-chat-ui:
-    <<: *ui
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-ai-chat-ui:SNAPSHOT-main-1
-    container_name: fintivio-ai-chat-ui
 
 networks:
   fintivio:
@@ -382,4 +362,3 @@ volumes:
   redis_data:    {name: fintivio-demo-redis}
   minio_data:    {name: fintivio-demo-minio}
   keycloak_data: {name: fintivio-demo-keycloak}
-  ollama_data:   {name: fintivio-demo-ollama}
