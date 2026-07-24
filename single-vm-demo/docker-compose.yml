@@ -230,6 +230,7 @@ services:
     mem_limit: 8g
     environment:
       OLLAMA_KEEP_ALIVE: "-1"   # model stays resident — cold loads cost ~20s per extraction
+      OLLAMA_CONTEXT_LENGTH: "8192"  # large-schema prompts brush past the 4096 default
     volumes: [ollama_data:/root/.ollama]
     networks: [fintivio]
     restart: unless-stopped
