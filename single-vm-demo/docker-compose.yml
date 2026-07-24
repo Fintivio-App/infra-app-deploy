@@ -161,7 +161,7 @@ services:
   # ─────────────────────────── Node backends ─────────────────────────────────
   fintivio-gateway:
     <<: *node-backend
-    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-gateway:RELEASE-176
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-gateway:SNAPSHOT-feat.ai-orchestrator-sse-ratelimit-177  # SSE pass-through + AI rate limit (sha fc7fc80, same as main)
     container_name: fintivio-gateway
     depends_on:
       postgres: {condition: service_healthy}
@@ -306,7 +306,7 @@ services:
   # ─────────────────────────── Frontends ─────────────────────────────────────
   fintivio-main-ui:
     <<: *ui
-    image: fintivio-main-ui:${FRONTEND_IMAGE_TAG}
+    image: ${BACKEND_IMAGE_NAMESPACE}/fintivio-main-ui:SNAPSHOT-demo-version-195  # CI build w/ ai-chat remote + assistant panel slot
     container_name: fintivio-main-ui
 
   fintivio-dashboard-ui:
